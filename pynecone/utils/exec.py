@@ -38,6 +38,9 @@ def run_frontend(app: App, root: Path, port: str):
         root: root path of the project.
         port: port of the app.
     """
+    # validate bun version
+    prerequisites.validate_and_install_bun(initialize=False)
+
     # Set up the frontend.
     setup_frontend(root)
 
@@ -51,14 +54,7 @@ def run_frontend(app: App, root: Path, port: str):
     console.rule("[bold green]App Running")
     os.environ["PORT"] = get_config().port if port is None else port
 
-    subprocess.Popen(
-        [prerequisites.get_package_manager(), "run", "next", "telemetry", "disable"],
-        cwd=constants.WEB_DIR,
-        env=os.environ,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.STDOUT,
-    )
-
+    # Run the frontend in development mode.
     subprocess.Popen(
         [prerequisites.get_package_manager(), "run", "dev"],
         cwd=constants.WEB_DIR,
@@ -80,6 +76,7 @@ def run_frontend_prod(app: App, root: Path, port: str):
     # Export the app.
     export_app(app)
 
+    # Set the port.
     os.environ["PORT"] = get_config().port if port is None else port
 
     # Run the frontend in production mode.

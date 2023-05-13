@@ -20,13 +20,33 @@ if TYPE_CHECKING:
     from pynecone.app import App
 
 
+def update_json_file(file_path, key, value):
+    """Update the contents of a json file.
+
+    Args:
+        file_path: the path to the JSON file.
+        key: object key to update.
+        value: value of key.
+    """
+    with open(file_path) as f:  # type: ignore
+        json_object = json.load(f)
+        json_object[key] = value
+    with open(file_path, "w") as f:
+        json.dump(json_object, f, ensure_ascii=False)
+
+
 def set_pynecone_project_hash():
     """Write the hash of the Pynecone project to a PCVERSION_APP_FILE."""
-    with open(constants.PCVERSION_APP_FILE) as f:  # type: ignore
-        pynecone_json = json.load(f)
-        pynecone_json["project_hash"] = random.getrandbits(128)
-    with open(constants.PCVERSION_APP_FILE, "w") as f:
-        json.dump(pynecone_json, f, ensure_ascii=False)
+    update_json_file(
+        constants.PCVERSION_APP_FILE, "project_hash", random.getrandbits(128)
+    )
+
+
+def set_pynecone_upload_endpoint():
+    """Write the upload url to a PCVERSION_APP_FILE."""
+    update_json_file(
+        constants.PCVERSION_APP_FILE, "uploadUrl", constants.Endpoint.UPLOAD.get_url()
+    )
 
 
 def generate_sitemap(deploy_url: str):
@@ -120,24 +140,41 @@ def posix_export(backend: bool = True, frontend: bool = True):
         os.system(cmd)
 
 
-def setup_frontend(root: Path):
+def setup_frontend(root: Path, disable_telemetry: bool = True):
     """Set up the frontend.
 
     Args:
         root: root path of the project.
+        disable_telemetry: Whether to disable the Next telemetry.
     """
     # Initialize the web directory if it doesn't exist.
     web_dir = prerequisites.create_web_directory(root)
 
-    # Install frontend packages
+    # Install frontend packages.
     prerequisites.install_frontend_packages(web_dir)
 
-    # copy asset files to public folder
+    # Copy asset files to public folder.
     path_ops.mkdir(str(root / constants.WEB_ASSETS_DIR))
     path_ops.cp(
         src=str(root / constants.APP_ASSETS_DIR),
         dest=str(root / constants.WEB_ASSETS_DIR),
     )
+
+    # Disable the Next telemetry.
+    if disable_telemetry:
+        subprocess.Popen(
+            [
+                prerequisites.get_package_manager(),
+                "run",
+                "next",
+                "telemetry",
+                "disable",
+            ],
+            cwd=constants.WEB_DIR,
+            env=os.environ,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+        )
 
 
 def setup_backend():
