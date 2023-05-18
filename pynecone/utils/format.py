@@ -15,6 +15,7 @@ from pynecone import constants
 from pynecone.utils import types
 
 if TYPE_CHECKING:
+    from pynecone.components.component import ComponentStyle
     from pynecone.event import EventChain, EventHandler, EventSpec
 
 WRAP_MAP = {
@@ -294,8 +295,14 @@ def format_event(event_spec: EventSpec) -> str:
             for name, val in event_spec.args
         ]
     )
-    quote = '"'
-    return f"E(\"{format_event_handler(event_spec.handler)}\", {wrap(args, '{')}, {wrap(event_spec.client_handler_name, quote) if event_spec.client_handler_name else ''})"
+    event_args = [
+        wrap(format_event_handler(event_spec.handler), '"'),
+    ]
+    event_args.append(wrap(args, "{"))
+
+    if event_spec.client_handler_name:
+        event_args.append(wrap(event_spec.client_handler_name, '"'))
+    return f"E({', '.join(event_args)})"
 
 
 def format_full_control_event(event_chain: EventChain) -> str:
@@ -404,6 +411,33 @@ def format_ref(ref: str) -> str:
     return f"ref_{clean_ref}"
 
 
+def format_dict(prop: ComponentStyle) -> str:
+    """Format a dict with vars potentially as values.
+
+    Args:
+        prop: The dict to format.
+
+    Returns:
+        The formatted dict.
+    """
+    # Import here to avoid circular imports.
+    from pynecone.vars import Var
+
+    # Convert any var keys to strings.
+    prop = {key: str(val) if isinstance(val, Var) else val for key, val in prop.items()}
+
+    # Dump the dict to a string.
+    fprop = json_dumps(prop)
+
+    # This substitution is necessary to unwrap var values.
+    fprop = re.sub('"{', "", fprop)
+    fprop = re.sub('}"', "", fprop)
+    fprop = re.sub('\\\\"', '"', fprop)
+
+    # Return the formatted dict.
+    return fprop
+
+
 def json_dumps(obj: Any) -> str:
     """Takes an object and returns a jsonified string.
 
@@ -413,4 +447,4 @@ def json_dumps(obj: Any) -> str:
     Returns:
         A string
     """
-    return json.dumps(obj, ensure_ascii=False)
+    return json.dumps(obj, ensure_ascii=False, default=list)

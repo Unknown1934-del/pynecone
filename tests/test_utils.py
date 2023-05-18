@@ -1,16 +1,20 @@
+import os
 import typing
+from pathlib import Path
 from typing import Any, List, Union
 
 import pytest
 from packaging import version
 
+from pynecone import Env
+from pynecone.constants import CONFIG_FILE, DB_URL
 from pynecone.utils import build, format, imports, prerequisites, types
 from pynecone.vars import Var
 
 V055 = version.parse("0.5.5")
 V059 = version.parse("0.5.9")
 V056 = version.parse("0.5.6")
-V0510 = version.parse("0.5.10")
+V062 = version.parse("0.6.2")
 
 
 @pytest.mark.parametrize(
@@ -242,7 +246,7 @@ def test_format_route(route: str, expected: bool):
     [
         (V055, False, "yes"),
         (V059, True, None),
-        (V0510, False, "yes"),
+        (V062, False, "yes"),
     ],
 )
 def test_bun_validate_and_install(mocker, bun_version, is_valid, prompt_input):
@@ -326,6 +330,7 @@ def test_setup_frontend(tmp_path, mocker):
     assert str(web_folder) == prerequisites.create_web_directory(tmp_path)
 
     mocker.patch("pynecone.utils.prerequisites.install_frontend_packages")
+    mocker.patch("pynecone.utils.build.set_pynecone_upload_endpoint")
 
     build.setup_frontend(tmp_path, disable_telemetry=False)
     assert web_folder.exists()
@@ -389,6 +394,43 @@ def test_create_config(app_name, expected_config_name, mocker):
     tmpl_mock.render.assert_called_with(
         app_name=app_name, config_name=expected_config_name
     )
+
+
+@pytest.fixture
+def tmp_working_dir(tmp_path):
+    """Create a temporary directory and chdir to it.
+
+    After the test executes, chdir back to the original working directory.
+
+    Args:
+        tmp_path: pytest tmp_path fixture creates per-test temp dir
+
+    Yields:
+        subdirectory of tmp_path which is now the current working directory.
+    """
+    old_pwd = Path(".").resolve()
+    working_dir = tmp_path / "working_dir"
+    working_dir.mkdir()
+    os.chdir(working_dir)
+    yield working_dir
+    os.chdir(old_pwd)
+
+
+def test_create_config_e2e(tmp_working_dir):
+    """Create a new config file, exec it, and make assertions about the config.
+
+    Args:
+        tmp_working_dir: a new directory that is the current working directory
+            for the duration of the test.
+    """
+    app_name = "e2e"
+    prerequisites.create_config(app_name)
+    eval_globals = {}
+    exec((tmp_working_dir / CONFIG_FILE).read_text(), eval_globals)
+    config = eval_globals["config"]
+    assert config.app_name == app_name
+    assert config.db_url == DB_URL
+    assert config.env == Env.DEV
 
 
 @pytest.mark.parametrize(

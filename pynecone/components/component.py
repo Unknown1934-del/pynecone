@@ -94,6 +94,13 @@ class Component(Base, ABC):
         Raises:
             TypeError: If an invalid prop is passed.
         """
+        # Set the id and children initially.
+        initial_kwargs = {
+            "id": kwargs.get("id"),
+            "children": kwargs.get("children", []),
+        }
+        super().__init__(**initial_kwargs)
+
         # Get the component fields, triggers, and props.
         fields = self.get_fields()
         triggers = self.get_triggers()
@@ -251,7 +258,6 @@ class Component(Base, ABC):
             events = [
                 EventSpec(
                     handler=e.handler,
-                    local_args=(EVENT_ARG,),
                     args=get_handler_args(e, arg),
                 )
                 for e in events
@@ -265,17 +271,15 @@ class Component(Base, ABC):
             events=events, state_name=state_name, full_control=full_control
         )
 
-    @classmethod
-    def get_triggers(cls) -> Set[str]:
+    def get_triggers(self) -> Set[str]:
         """Get the event triggers for the component.
 
         Returns:
             The event triggers.
         """
-        return EVENT_TRIGGERS | set(cls.get_controlled_triggers())
+        return EVENT_TRIGGERS | set(self.get_controlled_triggers())
 
-    @classmethod
-    def get_controlled_triggers(cls) -> Dict[str, Var]:
+    def get_controlled_triggers(self) -> Dict[str, Var]:
         """Get the event triggers that pass the component's value to the handler.
 
         Returns:
@@ -312,13 +316,15 @@ class Component(Base, ABC):
         )
 
         # Add component props to the tag.
-        props = {attr: getattr(self, attr) for attr in self.get_props()}
+        props = {
+            attr[:-1] if attr.endswith("_") else attr: getattr(self, attr)
+            for attr in self.get_props()
+        }
 
-        # Special case for props named `type_`.
-        if hasattr(self, "type_"):
-            props["type"] = self.type_  # type: ignore
-        if hasattr(self, "as_"):
-            props["as"] = self.as_  # type: ignore
+        # Add ref to element if `id` is not None.
+        ref = self.get_ref()
+        if ref is not None:
+            props["ref"] = Var.create(ref, is_local=False)
 
         return tag.add_props(**props)
 
@@ -468,7 +474,7 @@ class Component(Base, ABC):
         """
         ref = self.get_ref()
         if ref is not None:
-            return f"const {ref} = useRef(null);"
+            return f"const {ref} = useRef(null); refs['{ref}'] = {ref};"
         return None
 
     def get_hooks(self) -> Set[str]:
@@ -487,7 +493,7 @@ class Component(Base, ABC):
 
         # Add the hook code for the children.
         for child in self.children:
-            code.update(child.get_hooks())
+            code |= child.get_hooks()
 
         return code
 
@@ -500,6 +506,20 @@ class Component(Base, ABC):
         if self.id is None:
             return None
         return format.format_ref(self.id)
+
+    def get_refs(self) -> Set[str]:
+        """Get the refs for the children of the component.
+
+        Returns:
+            The refs for the children.
+        """
+        refs = set()
+        ref = self.get_ref()
+        if ref is not None:
+            refs.add(ref)
+        for child in self.children:
+            refs |= child.get_refs()
+        return refs
 
     def get_custom_components(
         self, seen: Optional[Set[str]] = None
@@ -564,7 +584,7 @@ class CustomComponent(Component):
     library = f"/{constants.COMPONENTS_PATH}"
 
     # The function that creates the component.
-    component_fn: Callable[..., Component]
+    component_fn: Callable[..., Component] = Component.create
 
     # The props of the component.
     props: Dict[str, Any] = {}

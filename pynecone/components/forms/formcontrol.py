@@ -1,8 +1,32 @@
 """Form components."""
 
+from typing import Dict
+
 from pynecone.components.component import Component
 from pynecone.components.libs.chakra import ChakraComponent
 from pynecone.vars import Var
+
+
+class Form(ChakraComponent):
+    """A form component."""
+
+    tag = "Box"
+
+    as_: Var[str] = "form"  # type: ignore
+
+    def get_controlled_triggers(self) -> Dict[str, Dict]:
+        """Get the event triggers that pass the component's value to the handler.
+
+        Returns:
+            A dict mapping the event trigger to the var that is passed to the handler.
+        """
+        # Send all the input refs to the handler.
+        return {
+            "on_submit": {
+                ref[4:]: Var.create(f"{ref}.current.value", is_local=False)
+                for ref in self.get_refs()
+            }
+        }
 
 
 class FormControl(ChakraComponent):
@@ -33,7 +57,7 @@ class FormControl(ChakraComponent):
         input=None,
         help_text=None,
         error_message=None,
-        **props
+        **props,
     ) -> Component:
         """Create a form control component.
 

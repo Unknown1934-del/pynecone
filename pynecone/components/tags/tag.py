@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 from plotly.graph_objects import Figure
 from plotly.io import to_json
 
 from pynecone.base import Base
-from pynecone.event import EventChain
+from pynecone.event import EVENT_ARG, EventChain
 from pynecone.utils import format, types
 from pynecone.vars import Var
 
@@ -64,6 +63,9 @@ class Tag(Base):
 
         Returns:
             The formatted prop to display within a tag.
+
+        Raises:
+            TypeError: If the prop is not a valid type.
         """
         # Handle var props.
         if isinstance(prop, Var):
@@ -75,16 +77,14 @@ class Tag(Base):
 
         # Handle event props.
         elif isinstance(prop, EventChain):
-            local_args = ",".join(([str(a) for a in prop.events[0].local_args]))
-
             if prop.full_control:
                 # Full control component events.
                 event = format.format_full_control_event(prop)
             else:
                 # All other events.
                 chain = ",".join([format.format_event(event) for event in prop.events])
-                event = f"Event([{chain}])"
-            prop = f"({local_args}) => {event}"
+                event = f"Event([{chain}], {EVENT_ARG})"
+            prop = f"{EVENT_ARG} => {event}"
 
         # Handle other types.
         elif isinstance(prop, str):
@@ -96,21 +96,17 @@ class Tag(Base):
             prop = json.loads(to_json(prop))["data"]  # type: ignore
 
         # For dictionaries, convert any properties to strings.
+        elif isinstance(prop, dict):
+            prop = format.format_dict(prop)
+
         else:
-            if isinstance(prop, dict):
-                # Convert any var keys to strings.
-                prop = {
-                    key: str(val) if isinstance(val, Var) else val
-                    for key, val in prop.items()
-                }
-
             # Dump the prop as JSON.
-            prop = format.json_dumps(prop)
-
-            # This substitution is necessary to unwrap var values.
-            prop = re.sub('"{', "", prop)
-            prop = re.sub('}"', "", prop)
-            prop = re.sub('\\\\"', '"', prop)
+            try:
+                prop = format.json_dumps(prop)
+            except TypeError as e:
+                raise TypeError(
+                    f"Could not format prop: {prop} of type {type(prop)}"
+                ) from e
 
         # Wrap the variable in braces.
         assert isinstance(prop, str), "The prop must be a string."

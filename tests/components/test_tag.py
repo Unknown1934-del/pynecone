@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 import pytest
 
-from pynecone.components.tags import CondTag, Tag
+from pynecone.components.tags import CondTag, Tag, tagless
 from pynecone.event import EVENT_ARG, EventChain, EventHandler, EventSpec
 from pynecone.vars import BaseVar, Var
 
@@ -25,19 +25,18 @@ def mock_event(arg):
         ({"a": 1, "b": 2, "c": 3}, '{{"a": 1, "b": 2, "c": 3}}'),
         (
             EventChain(events=[EventSpec(handler=EventHandler(fn=mock_event))]),
-            '{() => Event([E("mock_event", {}, )])}',
+            '{_e => Event([E("mock_event", {})], _e)}',
         ),
         (
             EventChain(
                 events=[
                     EventSpec(
                         handler=EventHandler(fn=mock_event),
-                        local_args=(EVENT_ARG,),
                         args=((Var.create_safe("arg"), EVENT_ARG.target.value),),
                     )
                 ]
             ),
-            '{(_e) => Event([E("mock_event", {arg:_e.target.value}, )])}',
+            '{_e => Event([E("mock_event", {arg:_e.target.value})], _e)}',
         ),
         ({"a": "red", "b": "blue"}, '{{"a": "red", "b": "blue"}}'),
         (BaseVar(name="var", type_="int"), "{var}"),
@@ -187,3 +186,10 @@ def test_format_cond_tag():
 
     assert false_value["name"] == "h2"
     assert false_value["contents"] == "False content"
+
+
+def test_tagless_string_representation():
+    """Test that the string representation of a tagless is correct."""
+    tag = tagless.Tagless(contents="Hello world")
+    expected_output = "Hello world"
+    assert str(tag) == expected_output
