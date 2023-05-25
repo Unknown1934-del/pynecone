@@ -9,7 +9,7 @@ class Html(Box):
     """Render the html.
 
     Returns:
-        The code to render the html component.
+        The code to render the  html component.
     """
 
     # The HTML to render.
@@ -17,7 +17,7 @@ class Html(Box):
 
     @classmethod
     def create(cls, *children, **props):
-        """Create an html component.
+        """Create a html component.
 
         Args:
             *children: The children of the component.
@@ -31,21 +31,9 @@ class Html(Box):
         """
         # If children are not provided, throw an error.
         if len(children) != 1:
-            raise ValueError("Must provide a single child to the HTML component.")
+            raise ValueError("Must provide children to the html component.")
         else:
-            child = children[0]
-            wrapped_child = child  # Initialize with the child as is
-
-            # Check for header tags and wrap them accordingly
-            if child.startswith("<h1>") and child.endswith("</h1>"):
-                wrapped_child = f"<h1>{child[4:-5]}</h1>"
-            elif child.startswith("<h2>") and child.endswith("</h2>"):
-                wrapped_child = f"<h2>{child[4:-5]}</h2>"
-            elif child.startswith("<h3>") and child.endswith("</h3>"):
-                wrapped_child = f"<h3>{child[4:-5]}</h3>"
-            # Add more conditions for other header tags if needed
-
-            props["dangerouslySetInnerHTML"] = {"__html": wrapped_child}
+            props["dangerouslySetInnerHTML"] = {"__html": children[0]}
 
         # Create the component.
         return super().create(**props)
