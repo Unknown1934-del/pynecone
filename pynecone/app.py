@@ -2,19 +2,34 @@
 
 import asyncio
 import inspect
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, Type, Union
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    Coroutine,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+)
 
 from fastapi import FastAPI, UploadFile
 from fastapi.middleware import cors
 from socketio import ASGIApp, AsyncNamespace, AsyncServer
+from starlette_admin.contrib.sqla.admin import Admin
+from starlette_admin.contrib.sqla.view import ModelView
 
 from pynecone import constants
+from pynecone.admin import AdminDash
 from pynecone.base import Base
 from pynecone.compiler import compiler
 from pynecone.compiler import utils as compiler_utils
 from pynecone.components.component import Component, ComponentStyle
+from pynecone.components.layout.fragment import Fragment
 from pynecone.config import get_config
-from pynecone.event import Event, EventHandler
+from pynecone.event import Event, EventHandler, EventSpec
 from pynecone.middleware import HydrateMiddleware, Middleware
 from pynecone.model import Model
 from pynecone.route import (
@@ -63,7 +78,13 @@ class App(Base):
     middleware: List[Middleware] = []
 
     # List of event handlers to trigger when a page loads.
-    load_events: Dict[str, List[EventHandler]] = {}
+    load_events: Dict[str, List[Union[EventHandler, EventSpec]]] = {}
+
+    # Admin dashboard
+    admin_dash: Optional[AdminDash] = None
+
+    # The component to render if there is a connection error to the server.
+    connect_error_component: Optional[Component] = None
 
     def __init__(self, *args, **kwargs):
         """Initialize the app.
@@ -88,15 +109,12 @@ class App(Base):
         self.add_cors()
         self.add_default_endpoints()
 
-        # Set up CORS options.
-        cors_allowed_origins = config.cors_allowed_origins
-        if config.cors_allowed_origins == [constants.CORS_ALLOWED_ORIGINS]:
-            cors_allowed_origins = "*"
-
         # Set up the Socket.IO AsyncServer.
         self.sio = AsyncServer(
             async_mode="asgi",
-            cors_allowed_origins=cors_allowed_origins,
+            cors_allowed_origins="*"
+            if config.cors_allowed_origins == constants.CORS_ALLOWED_ORIGINS
+            else config.cors_allowed_origins,
             cors_credentials=config.cors_credentials,
             max_http_buffer_size=config.polling_max_http_buffer_size,
             ping_interval=constants.PING_INTERVAL,
@@ -114,6 +132,9 @@ class App(Base):
 
         # Mount the socket app with the API.
         self.api.mount(str(constants.Endpoint.EVENT), self.socket_app)
+
+        # Set up the admin dash.
+        self.setup_admin_dash()
 
     def __repr__(self) -> str:
         """Get the string representation of the app.
@@ -221,7 +242,9 @@ class App(Base):
         title: str = constants.DEFAULT_TITLE,
         description: str = constants.DEFAULT_DESCRIPTION,
         image=constants.DEFAULT_IMAGE,
-        on_load: Optional[Union[EventHandler, List[EventHandler]]] = None,
+        on_load: Optional[
+            Union[EventHandler, EventSpec, List[Union[EventHandler, EventSpec]]]
+        ] = None,
         meta: List[Dict] = constants.DEFAULT_META_LIST,
         script_tags: Optional[List[Component]] = None,
     ):
@@ -269,9 +292,16 @@ class App(Base):
                 ) from e
             raise e
 
+        # Wrap the component in a fragment.
+        component = Fragment.create(component)
+
         # Add meta information to the component.
         compiler_utils.add_meta(
-            component, title=title, image=image, description=description, meta=meta
+            component,
+            title=title,
+            image=image,
+            description=description,
+            meta=meta,
         )
 
         # Add script tags if given
@@ -291,7 +321,7 @@ class App(Base):
                 on_load = [on_load]
             self.load_events[route] = on_load
 
-    def get_load_events(self, route: str) -> List[EventHandler]:
+    def get_load_events(self, route: str) -> List[Union[EventHandler, EventSpec]]:
         """Get the load events for a route.
 
         Args:
@@ -365,7 +395,11 @@ class App(Base):
         component = component if isinstance(component, Component) else component()
 
         compiler_utils.add_meta(
-            component, title=title, image=image, description=description, meta=meta
+            component,
+            title=title,
+            image=image,
+            description=description,
+            meta=meta,
         )
 
         froute = format.format_route
@@ -377,6 +411,25 @@ class App(Base):
             page.startswith("[...") or page.startswith("[[...") for page in self.pages
         ):
             self.pages[froute(constants.SLUG_404)] = component
+
+    def setup_admin_dash(self):
+        """Setup the admin dash."""
+        # Get the config.
+        config = get_config()
+        if config.admin_dash and config.admin_dash.models:
+            # Build the admin dashboard
+            admin = (
+                config.admin_dash.admin
+                if config.admin_dash.admin
+                else Admin(
+                    engine=Model.get_db_engine(),
+                    title="Pynecone Admin Dashboard",
+                    logo_url="https://pynecone.io/logo.png",
+                )
+            )
+            for model in config.admin_dash.models:
+                admin.add_view(ModelView(model))
+            admin.mount_to(self.api)
 
     def compile(self):
         """Compile the app and output it to the pages folder."""
@@ -403,7 +456,12 @@ class App(Base):
         custom_components = set()
         for route, component in self.pages.items():
             component.add_style(self.style)
-            compiler.compile_page(route, component, self.state)
+            compiler.compile_page(
+                route,
+                component,
+                self.state,
+                self.connect_error_component,
+            )
 
             # Add the custom components from the page to the set.
             custom_components |= component.get_custom_components()
@@ -414,7 +472,7 @@ class App(Base):
 
 async def process(
     app: App, event: Event, sid: str, headers: Dict, client_ip: str
-) -> StateUpdate:
+) -> AsyncIterator[StateUpdate]:
     """Process an event.
 
     Args:
@@ -424,7 +482,7 @@ async def process(
         headers: The client headers.
         client_ip: The client_ip.
 
-    Returns:
+    Yields:
         The state updates after processing the event.
     """
     # Get the state for the session.
@@ -450,19 +508,22 @@ async def process(
     # Preprocess the event.
     update = await app.preprocess(state, event)
 
+    # If there was an update, yield it.
+    if update is not None:
+        yield update
+
     # Only process the event if there is no update.
-    if update is None:
-        # Apply the event to the state.
-        update = await state._process(event)
+    else:
+        # Process the event.
+        async for update in state._process(event):
+            # Postprocess the event.
+            update = await app.postprocess(state, event, update)
 
-        # Postprocess the event.
-        update = await app.postprocess(state, event, update)
+            # Yield the update.
+            yield update
 
-    # Update the state.
+    # Set the state for the session.
     app.state_manager.set_state(event.token, state)
-
-    # Return the update.
-    return update
 
 
 async def ping() -> str:
@@ -534,7 +595,8 @@ def upload(app: App):
             name=handler,
             payload={handler_upload_param[0]: files},
         )
-        update = await state._process(event)
+        # TODO: refactor this to handle yields.
+        update = await state._process(event).__anext__()
         return update
 
     return upload_file
@@ -598,10 +660,9 @@ class EventNamespace(AsyncNamespace):
         client_ip = environ["REMOTE_ADDR"]
 
         # Process the events.
-        update = await process(self.app, event, sid, headers, client_ip)
-
-        # Emit the event.
-        await self.emit(str(constants.SocketEvent.EVENT), update.json(), to=sid)  # type: ignore
+        async for update in process(self.app, event, sid, headers, client_ip):
+            # Emit the event.
+            await self.emit(str(constants.SocketEvent.EVENT), update.json(), to=sid)  # type: ignore
 
     async def on_ping(self, sid):
         """Event for testing the API endpoint.

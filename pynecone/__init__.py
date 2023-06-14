@@ -6,9 +6,11 @@ we use the Flask "import name as name" syntax.
 """
 
 from . import el as el
+from .admin import AdminDash as AdminDash
 from .app import App as App
 from .app import UploadFile as UploadFile
 from .base import Base as Base
+from .compiler.utils import get_asset_path
 from .components import *
 from .components.component import custom_component as memo
 from .components.graphing.victory import data as data
@@ -21,6 +23,7 @@ from .event import EventChain as EventChain
 from .event import FileUpload as upload_files
 from .event import console_log as console_log
 from .event import redirect as redirect
+from .event import set_focus as set_focus
 from .event import set_value as set_value
 from .event import window_alert as window_alert
 from .middleware import Middleware as Middleware
@@ -29,6 +32,7 @@ from .model import session as session
 from .route import route as route
 from .state import ComputedVar as var
 from .state import State as State
+from .style import color_mode as color_mode
 from .style import toggle_color_mode as toggle_color_mode
 from .vars import Var as Var
 from .vars import cached_var as cached_var

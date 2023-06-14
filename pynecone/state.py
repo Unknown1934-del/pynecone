@@ -4,11 +4,13 @@ from __future__ import annotations
 import asyncio
 import copy
 import functools
+import inspect
 import traceback
 from abc import ABC
 from collections import defaultdict
 from typing import (
     Any,
+    AsyncIterator,
     Callable,
     ClassVar,
     Dict,
@@ -16,6 +18,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     Type,
     Union,
 )
@@ -26,7 +29,7 @@ from redis import Redis
 
 from pynecone import constants
 from pynecone.base import Base
-from pynecone.event import Event, EventHandler, fix_events, window_alert
+from pynecone.event import Event, EventHandler, EventSpec, fix_events, window_alert
 from pynecone.utils import format, prerequisites, types
 from pynecone.vars import BaseVar, ComputedVar, PCDict, PCList, Var
 
@@ -618,13 +621,13 @@ class State(Base, ABC, extra=pydantic.Extra.allow):
             raise ValueError(f"Invalid path: {path}")
         return self.substates[path[0]].get_substate(path[1:])
 
-    async def _process(self, event: Event) -> StateUpdate:
+    async def _process(self, event: Event) -> AsyncIterator[StateUpdate]:
         """Obtain event info and process event.
 
         Args:
             event: The event to process.
 
-        Returns:
+        Yields:
             The state update after processing the event.
 
         Raises:
@@ -641,52 +644,79 @@ class State(Base, ABC, extra=pydantic.Extra.allow):
                 "The value of state cannot be None when processing an event."
             )
 
-        return await self._process_event(
+        # Get the event generator.
+        event_iter = self._process_event(
             handler=handler,
             state=substate,
             payload=event.payload,
-            token=event.token,
         )
 
+        # Clean the state before processing the event.
+        self.clean()
+
+        # Run the event generator and return state updates.
+        async for events, final in event_iter:
+            # Fix the returned events.
+            events = fix_events(events, event.token)  # type: ignore
+
+            # Get the delta after processing the event.
+            delta = self.get_delta()
+
+            # Yield the state update.
+            yield StateUpdate(delta=delta, events=events, final=final)
+
+            # Clean the state to prepare for the next event.
+            self.clean()
+
     async def _process_event(
-        self, handler: EventHandler, state: State, payload: Dict, token: str
-    ) -> StateUpdate:
+        self, handler: EventHandler, state: State, payload: Dict
+    ) -> AsyncIterator[Tuple[Optional[List[EventSpec]], bool]]:
         """Process event.
 
         Args:
             handler: Eventhandler to process.
             state: State to process the handler.
             payload: The event payload.
-            token: Client token.
 
-        Returns:
-            The state update after processing the event.
+        Yields:
+            Tuple containing:
+                0: The state update after processing the event.
+                1: Whether the event is the final event.
         """
+        # Get the function to process the event.
         fn = functools.partial(handler.fn, state)
+
+        # Wrap the function in a try/except block.
         try:
+            # Handle async functions.
             if asyncio.iscoroutinefunction(fn.func):
                 events = await fn(**payload)
+
+            # Handle regular functions.
             else:
                 events = fn(**payload)
+
+            # Handle async generators.
+            if inspect.isasyncgen(events):
+                async for event in events:
+                    yield event, False
+                yield None, True
+
+            # Handle regular generators.
+            elif inspect.isgenerator(events):
+                for event in events:
+                    yield event, False
+                yield None, True
+
+            # Handle regular event chains.
+            else:
+                yield events, True
+
+        # If an error occurs, throw a window alert.
         except Exception:
             error = traceback.format_exc()
             print(error)
-            events = fix_events(
-                [window_alert("An error occurred. See logs for details.")], token
-            )
-            return StateUpdate(events=events)
-
-        # Fix the returned events.
-        events = fix_events(events, token)
-
-        # Get the delta after processing the event.
-        delta = self.get_delta()
-
-        # Reset the dirty vars.
-        self.clean()
-
-        # Return the state update.
-        return StateUpdate(delta=delta, events=events)
+            yield [window_alert("An error occurred. See logs for details.")], True
 
     def _always_dirty_computed_vars(self) -> Set[str]:
         """The set of ComputedVars that always need to be recalculated.
@@ -850,6 +880,9 @@ class StateUpdate(Base):
 
     # Events to be added to the event queue.
     events: List[Event] = []
+
+    # Whether this is the final state update for the event.
+    final: bool = True
 
 
 class StateManager(Base):

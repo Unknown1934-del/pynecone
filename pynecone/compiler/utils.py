@@ -12,9 +12,9 @@ from pynecone.components.base import (
     Head,
     Html,
     Image,
-    Link,
     Main,
     Meta,
+    RawLink,
     Script,
     Title,
 )
@@ -155,7 +155,7 @@ def create_document_root(stylesheets: List[str]) -> Component:
     Returns:
         The document root.
     """
-    sheets = [Link.create(rel="stylesheet", href=href) for href in stylesheets]
+    sheets = [RawLink.create(rel="stylesheet", href=href) for href in stylesheets]
     return Html.create(
         DocumentHead.create(*sheets),
         Body.create(
@@ -220,6 +220,21 @@ def get_components_path() -> str:
         The path of the compiled components.
     """
     return os.path.join(constants.WEB_UTILS_DIR, "components" + constants.JS_EXT)
+
+
+def get_asset_path(filename: Optional[str] = None) -> str:
+    """Get the path for an asset.
+
+    Args:
+        filename: Optional, if given, is added to the root path of assets dir.
+
+    Returns:
+        The path of the asset.
+    """
+    if filename is None:
+        return constants.WEB_ASSETS_DIR
+    else:
+        return os.path.join(constants.WEB_ASSETS_DIR, filename)
 
 
 def add_meta(

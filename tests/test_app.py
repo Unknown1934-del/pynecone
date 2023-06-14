@@ -1,15 +1,25 @@
 import io
 import os.path
+import sys
 from typing import List, Tuple, Type
 
+if sys.version_info.major >= 3 and sys.version_info.minor > 7:
+    from unittest.mock import AsyncMock  # type: ignore
+else:
+    # python 3.7 doesn't ship with unittest.mock
+    from asynctest import CoroutineMock as AsyncMock
 import pytest
+import sqlmodel
 from fastapi import UploadFile
+from starlette_admin.auth import AuthProvider
+from starlette_admin.contrib.sqla.admin import Admin
 
-from pynecone import constants
+from pynecone import AdminDash, constants
 from pynecone.app import App, DefaultState, process, upload
 from pynecone.components import Box
 from pynecone.event import Event, get_hydrate_event
 from pynecone.middleware import HydrateMiddleware
+from pynecone.model import Model
 from pynecone.state import State, StateUpdate
 from pynecone.style import Style
 from pynecone.utils import format
@@ -68,6 +78,85 @@ def test_state() -> Type[State]:
     return TestState
 
 
+@pytest.fixture()
+def test_model() -> Type[Model]:
+    """A default model.
+
+    Returns:
+        A default model.
+    """
+
+    class TestModel(Model):
+        pass
+
+    return TestModel
+
+
+@pytest.fixture()
+def test_model_auth() -> Type[Model]:
+    """A default model.
+
+    Returns:
+        A default model.
+    """
+
+    class TestModelAuth(Model):
+        """A test model with auth."""
+
+        pass
+
+    return TestModelAuth
+
+
+@pytest.fixture()
+def test_get_engine():
+    """A default database engine.
+
+    Returns:
+        A default database engine.
+    """
+    enable_admin = True
+    url = "sqlite:///test.db"
+    return sqlmodel.create_engine(
+        url,
+        echo=False,
+        connect_args={"check_same_thread": False} if enable_admin else {},
+    )
+
+
+@pytest.fixture()
+def test_custom_auth_admin() -> Type[AuthProvider]:
+    """A default auth provider.
+
+    Returns:
+        A default default auth provider.
+    """
+
+    class TestAuthProvider(AuthProvider):
+        """A test auth provider."""
+
+        login_path: str = "/login"
+        logout_path: str = "/logout"
+
+        def login(self):
+            """Login."""
+            pass
+
+        def is_authenticated(self):
+            """Is authenticated."""
+            pass
+
+        def get_admin_user(self):
+            """Get admin user."""
+            pass
+
+        def logout(self):
+            """Logout."""
+            pass
+
+    return TestAuthProvider
+
+
 def test_default_app(app: App):
     """Test creating an app with no args.
 
@@ -77,6 +166,7 @@ def test_default_app(app: App):
     assert app.state() == DefaultState()
     assert app.middleware == [HydrateMiddleware()]
     assert app.style == Style()
+    assert app.admin_dash is None
 
 
 def test_add_page_default_route(app: App, index_page, about_page):
@@ -143,6 +233,39 @@ def test_add_page_set_route_nested(app: App, index_page, windows_platform: bool)
     assert set(app.pages.keys()) == {route.strip(os.path.sep)}
 
 
+def test_initialize_with_admin_dashboard(test_model):
+    """Test setting the admin dashboard of an app.
+
+    Args:
+        test_model: The default model.
+    """
+    app = App(admin_dash=AdminDash(models=[test_model]))
+    assert app.admin_dash is not None
+    assert len(app.admin_dash.models) > 0
+    assert app.admin_dash.models[0] == test_model
+
+
+def test_initialize_with_custom_admin_dashboard(
+    test_get_engine,
+    test_custom_auth_admin,
+    test_model_auth,
+):
+    """Test setting the custom admin dashboard of an app.
+
+    Args:
+        test_get_engine: The default database engine.
+        test_model_auth: The default model for an auth admin dashboard.
+        test_custom_auth_admin: The custom auth provider.
+    """
+    custom_admin = Admin(engine=test_get_engine, auth_provider=test_custom_auth_admin)
+    app = App(admin_dash=AdminDash(models=[test_model_auth], admin=custom_admin))
+    assert app.admin_dash is not None
+    assert app.admin_dash.admin is not None
+    assert len(app.admin_dash.models) > 0
+    assert app.admin_dash.models[0] == test_model_auth
+    assert app.admin_dash.admin.auth_provider == test_custom_auth_admin
+
+
 def test_initialize_with_state(test_state):
     """Test setting the state of an app.
 
@@ -207,7 +330,7 @@ async def test_dynamic_var_event(test_state):
             router_data={"pathname": "/", "query": {}},
             payload={"value": 50},
         )
-    )
+    ).__anext__()
     assert result.delta == {"test_state": {"int_val": 50}}
 
 
@@ -324,7 +447,7 @@ async def test_list_mutation_detection__plain_list(
                 router_data={"pathname": "/", "query": {}},
                 payload={},
             )
-        )
+        ).__anext__()
 
         assert result.delta == expected_delta
 
@@ -451,7 +574,7 @@ async def test_dict_mutation_detection__plain_list(
                 router_data={"pathname": "/", "query": {}},
                 payload={},
             )
-        )
+        ).__anext__()
 
         assert result.delta == expected_delta
 
@@ -564,6 +687,7 @@ class DynamicState(State):
 
     loaded: int = 0
     counter: int = 0
+
     # side_effect_counter: int = 0
 
     def on_load(self):
@@ -645,7 +769,8 @@ async def test_dynamic_route_var_route_change_completed_on_load(
             sid=sid,
             headers={},
             client_ip=client_ip,
-        )
+        ).__anext__()
+
         # route change triggers: [full state dict, call on_load events, call set_is_hydrated(True)]
         assert update == StateUpdate(
             delta={
@@ -675,7 +800,7 @@ async def test_dynamic_route_var_route_change_completed_on_load(
             sid=sid,
             headers={},
             client_ip=client_ip,
-        )
+        ).__anext__()
         assert on_load_update == StateUpdate(
             delta={
                 state.get_name(): {
@@ -695,7 +820,7 @@ async def test_dynamic_route_var_route_change_completed_on_load(
             sid=sid,
             headers={},
             client_ip=client_ip,
-        )
+        ).__anext__()
         assert on_set_is_hydrated_update == StateUpdate(
             delta={
                 state.get_name(): {
@@ -715,7 +840,7 @@ async def test_dynamic_route_var_route_change_completed_on_load(
             sid=sid,
             headers={},
             client_ip=client_ip,
-        )
+        ).__anext__()
         assert update == StateUpdate(
             delta={
                 state.get_name(): {
@@ -731,3 +856,33 @@ async def test_dynamic_route_var_route_change_completed_on_load(
     assert state.counter == len(exp_vals)
     # print(f"Expected {exp_vals} rendering side effects, got {state.side_effect_counter}")
     # assert state.side_effect_counter == len(exp_vals)
+
+
+@pytest.mark.asyncio
+async def test_process_events(gen_state, mocker):
+    """Test that an event is processed properly and that it is postprocessed
+    n+1 times. Also check that the processing flag of the last stateupdate is set to
+    False.
+
+    Args:
+        gen_state: The state.
+        mocker: mocker object.
+    """
+    router_data = {
+        "pathname": "/",
+        "query": {},
+        "token": "mock_token",
+        "sid": "mock_sid",
+        "headers": {},
+        "ip": "127.0.0.1",
+    }
+    app = App(state=gen_state)
+    mocker.patch.object(app, "postprocess", AsyncMock())
+    event = Event(
+        token="token", name="gen_state.go", payload={"c": 5}, router_data=router_data
+    )
+
+    async for _update in process(app, event, "mock_sid", {}, "127.0.0.1"):
+        pass
+    assert gen_state.value == 5
+    assert app.postprocess.call_count == 6

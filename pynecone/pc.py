@@ -72,17 +72,28 @@ def run(
     loglevel: constants.LogLevel = typer.Option(
         constants.LogLevel.ERROR, help="The log level to use."
     ),
-    port: str = typer.Option(None, help="Specify a different frontend port."),
+    frontend_port: str = typer.Option(None, help="Specify a different frontend port."),
     backend_port: str = typer.Option(None, help="Specify a different backend port."),
+    backend_host: str = typer.Option(None, help="Specify the backend host."),
 ):
     """Run the app in the current directory."""
     if platform.system() == "Windows":
         console.print(
             "[yellow][WARNING] We strongly advise you to use Windows Subsystem for Linux (WSL) for optimal performance when using Pynecone. Due to compatibility issues with one of our dependencies, Bun, you may experience slower performance on Windows. By using WSL, you can expect to see a significant speed increase."
         )
+    # Set ports as os env variables to take precedence over config and
+    # .env variables(if override_os_envs flag in config is set to False).
+    build.set_os_env(
+        frontend_port=frontend_port,
+        backend_port=backend_port,
+        backend_host=backend_host,
+    )
 
-    frontend_port = get_config().port if port is None else port
+    frontend_port = (
+        get_config().frontend_port if frontend_port is None else frontend_port
+    )
     backend_port = get_config().backend_port if backend_port is None else backend_port
+    backend_host = get_config().backend_host if backend_host is None else backend_host
 
     # If no --frontend-only and no --backend-only, then turn on frontend and backend both
     if not frontend and not backend:
@@ -114,6 +125,9 @@ def run(
     console.rule("[bold]Starting Pynecone App")
     app = prerequisites.get_app()
 
+    # Check the admin dashboard settings.
+    prerequisites.check_admin_settings()
+
     # Get the frontend and backend commands, based on the environment.
     frontend_cmd = backend_cmd = None
     if env == constants.Env.DEV:
@@ -126,10 +140,10 @@ def run(
     telemetry.send(f"run-{env.value}", get_config().telemetry_enabled)
 
     # Run the frontend and backend.
-    # try:
     if backend:
         threading.Thread(
-            target=backend_cmd, args=(app.__name__, backend_port, loglevel)
+            target=backend_cmd,
+            args=(app.__name__, backend_host, backend_port, loglevel),
         ).start()
     if frontend:
         threading.Thread(
@@ -199,6 +213,10 @@ def export(
 
     # Compile the app in production mode and export it.
     console.rule("[bold]Compiling production app and preparing for export.")
+
+    if frontend:
+        build.setup_frontend(Path.cwd())
+
     app = prerequisites.get_app().app
     build.export_app(
         app,

@@ -48,8 +48,8 @@ def run_process_and_launch_url(
         cwd=constants.WEB_DIR,
         env=os.environ,
         stderr=subprocess.STDOUT,
-        stdout=subprocess.PIPE,
-        universal_newlines=True,
+        stdout=None if platform.system() == "Windows" else subprocess.PIPE,
+        universal_newlines=None if platform.system() == "Windows" else True,
     )
 
     current_time = datetime.now()
@@ -96,7 +96,7 @@ def run_frontend(
 
     # Run the frontend in development mode.
     console.rule("[bold green]App Running")
-    os.environ["PORT"] = get_config().port if port is None else port
+    os.environ["PORT"] = get_config().frontend_port if port is None else port
     run_process_and_launch_url(
         [prerequisites.get_package_manager(), "run", "dev"], root, loglevel
     )
@@ -123,7 +123,7 @@ def run_frontend_prod(
     export_app(app, loglevel=loglevel)
 
     # Set the port.
-    os.environ["PORT"] = get_config().port if port is None else port
+    os.environ["PORT"] = get_config().frontend_port if port is None else port
 
     # Run the frontend in production mode.
     console.rule("[bold green]App Running")
@@ -133,11 +133,15 @@ def run_frontend_prod(
 
 
 def run_backend(
-    app_name: str, port: int, loglevel: constants.LogLevel = constants.LogLevel.ERROR
+    app_name: str,
+    host: str,
+    port: int,
+    loglevel: constants.LogLevel = constants.LogLevel.ERROR,
 ):
     """Run the backend.
 
     Args:
+        host: The app host
         app_name: The app name.
         port: The app port
         loglevel: The log level.
@@ -148,7 +152,7 @@ def run_backend(
         "uvicorn",
         f"{app_name}:{constants.APP_VAR}.{constants.API_VAR}",
         "--host",
-        constants.BACKEND_HOST,
+        host,
         "--port",
         str(port),
         "--log-level",
@@ -164,11 +168,15 @@ def run_backend(
 
 
 def run_backend_prod(
-    app_name: str, port: int, loglevel: constants.LogLevel = constants.LogLevel.ERROR
+    app_name: str,
+    host: str,
+    port: int,
+    loglevel: constants.LogLevel = constants.LogLevel.ERROR,
 ):
     """Run the backend.
 
     Args:
+        host: The app host
         app_name: The app name.
         port: The app port
         loglevel: The log level.
@@ -180,7 +188,7 @@ def run_backend_prod(
         [
             *constants.RUN_BACKEND_PROD_WINDOWS,
             "--host",
-            "0.0.0.0",
+            host,
             "--port",
             str(port),
             f"{app_name}:{constants.APP_VAR}",
@@ -189,7 +197,7 @@ def run_backend_prod(
         else [
             *constants.RUN_BACKEND_PROD,
             "--bind",
-            f"0.0.0.0:{port}",
+            f"{host}:{port}",
             "--threads",
             str(num_workers),
             f"{app_name}:{constants.APP_VAR}()",
